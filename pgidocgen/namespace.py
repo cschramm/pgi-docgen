@@ -15,7 +15,6 @@ import collections
 from xml.dom import minidom
 
 from . import util
-from .debug import get_line_numbers_for_name
 from .girdata import load_doc_references
 from .overrides import parse_override_docs
 
@@ -89,14 +88,14 @@ def fixup_since(text):
     def fixup_since(match):
         version = match.group(2)
         # e.g. "3.10."
-        version = version.rstrip(".")
+        version = version.rstrip(".)")
         # e.g. "ATK-2-16"
         version = version.split("-", 1)[-1].replace("-", ".")
         added_since[0] = version
         return ""
 
     text = re.sub(
-        '(^|\\s+)@?Since\\s*\\\\?:?\\s+([^\\s]+)(\\n|$|\\. )', fixup_since, text)
+        '(^|\\s+)[(@]?Since\\s*\\\\?:?\\s+([^\\s]+)(\\n|$|\\)|\\. )', fixup_since, text)
 
     return text, added_since[0]
 
@@ -175,19 +174,6 @@ class Namespace(object):
     @util.cached_property
     def doc_references(self):
         return load_doc_references(self.namespace, self.version)
-
-    @util.cached_property
-    def source_map(self):
-        """Returns a dict mapping C symbols to relative source paths and line
-        numbers. In case no debug symbols are present the returned dict will
-        be empty.
-        """
-
-        source = {}
-        for lib in self.shared_libraries:
-            for symbol, path in get_line_numbers_for_name(lib).items():
-                source[symbol] = path
-        return source
 
     def import_module(self):
         """Imports the module and initializes all dependencies.
@@ -405,7 +391,9 @@ def _parse_types(dom, module, namespace):
             parent_name = full_name.rsplit(".", 1)[0]
             all_shadows[parent_name + "." + shadows] = c_name
         if shadowed_by:
-            all_shadowed_by[full_name] = c_name
+            # in case something shadows itself just ignore it
+            if shadowed_by != local_name:
+                all_shadowed_by[full_name] = c_name
 
         if not introspectable or shadowed_by:
             skipped.add(c_name)
@@ -417,7 +405,7 @@ def _parse_types(dom, module, namespace):
 
     for key, value in all_shadows.items():
         shadow_map[all_shadowed_by.pop(key)] = value
-    assert not all_shadowed_by
+    assert not all_shadowed_by, all_shadowed_by
     del all_shadowed_by
     del all_shadows
 
@@ -574,13 +562,21 @@ def _is_source_position_node(child) -> bool:
 def _parse_private(dom, namespace):
     private = set()
 
+    def is_empty(node):
+        for child in record.childNodes:
+            if child.nodeType == child.TEXT_NODE:
+                continue
+            if child.tagName == "source-position":
+                continue
+            return False
+        return True
+
     # if disguised and no record content... not perfect, but
     # we have no other way
     for record in dom.getElementsByTagName("record"):
-        disguised = bool(int(record.getAttribute("disguised") or "0"))
         is_gtype_struct = bool(record.getAttribute("glib:is-gtype-struct-for"))
-        if disguised and not is_gtype_struct:
-
+        is_private = record.getAttribute("name").endswith("Private")
+        if is_private and not is_gtype_struct and is_empty(record):
             meaningful_children = [
                 c for c in record.childNodes
                 if not _is_empty_text_node(c) and not _is_source_position_node(c)
@@ -623,6 +619,7 @@ def _parse_docs(dom):
         [("field",), fields],
         [("property",), properties],
         [("parameter", "glib:signal"), sparas],
+        [("parameter", "function-macro"), parameters],
         [("parameter", "function"), parameters],
         [("parameter", "method"), parameters],
         [("parameter", "callback"), parameters],
