@@ -1,0 +1,20 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[dev-packages]
+
+[requires]
+python_version = "3.8"
+
+[packages]
+requests = "*"
+jinja2 = "*"
+sphinx = "*"
+lxml = "*"
+beautifulsoup4 = "*"
+cairocffi = "*"
+
+[packages.pgi]
+git = "https://github.com/pygobject/pgi.git"
